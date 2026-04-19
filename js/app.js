@@ -4,13 +4,15 @@ let reviewWords = [];
 let reviewIndex = 0;
 let dailyCount = 50;
 let learnGeneration = 0;
-let currentBook = 'textbook';
+let currentBook = 'zhongkao';
+let currentJbyqUnit = null;
 
 document.addEventListener('DOMContentLoaded', async () => {
   dailyCount = await getSetting('dailyCount', 50);
   const countInput = document.getElementById('setting-daily-count');
   if (countInput) countInput.value = dailyCount;
   currentBook = await getSelectedBook();
+  currentJbyqUnit = await getSetting('jbyqUnit', null);
   updateBookButtons();
   initNavigation();
   initHome();
@@ -24,15 +26,31 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 function updateBookButtons() {
-  document.getElementById('btn-book-textbook').classList.toggle('active', currentBook === 'textbook');
   document.getElementById('btn-book-zhongkao').classList.toggle('active', currentBook === 'zhongkao');
+  document.getElementById('btn-book-jbyq').classList.toggle('active', currentBook === 'jbyq');
+  const unitSwitch = document.getElementById('jbyq-unit-switch');
+  unitSwitch.style.display = currentBook === 'jbyq' ? 'flex' : 'none';
+  document.getElementById('btn-unit-3').classList.toggle('active', currentJbyqUnit === '第三单元');
+  document.getElementById('btn-unit-4').classList.toggle('active', currentJbyqUnit === '第四单元');
 }
 
 function getActiveWordData() {
   const allData = getAllWordData();
-  const groups = currentBook === 'zhongkao' ? BOOK_GROUPS.zhongkao : BOOK_GROUPS.textbook;
+  let groups;
+  if (currentBook === 'jbyq') groups = BOOK_GROUPS.jbyq;
+  else groups = BOOK_GROUPS.zhongkao;
   const filtered = {};
-  groups.forEach(key => { if (allData[key]) filtered[key] = allData[key]; });
+  groups.forEach(key => {
+    if (allData[key]) {
+      if (currentBook === 'jbyq' && currentJbyqUnit) {
+        const unitData = {};
+        if (allData[key][currentJbyqUnit]) unitData[currentJbyqUnit] = allData[key][currentJbyqUnit];
+        filtered[key] = unitData;
+      } else {
+        filtered[key] = allData[key];
+      }
+    }
+  });
   return filtered;
 }
 
@@ -74,15 +92,27 @@ function showPage(pageId) {
 function initHome() {
   document.getElementById('btn-start-learn').addEventListener('click', startLearn);
   document.getElementById('card-review').addEventListener('click', showHardWordsPage);
-  document.getElementById('btn-book-textbook').addEventListener('click', async () => {
-    currentBook = 'textbook';
+  document.getElementById('btn-book-zhongkao').addEventListener('click', async () => {
+    currentBook = 'zhongkao';
     await setSelectedBook(currentBook);
     updateBookButtons();
     updateHome();
   });
-  document.getElementById('btn-book-zhongkao').addEventListener('click', async () => {
-    currentBook = 'zhongkao';
+  document.getElementById('btn-book-jbyq').addEventListener('click', async () => {
+    currentBook = 'jbyq';
     await setSelectedBook(currentBook);
+    updateBookButtons();
+    updateHome();
+  });
+  document.getElementById('btn-unit-3').addEventListener('click', async () => {
+    currentJbyqUnit = '第三单元';
+    await saveSetting('jbyqUnit', currentJbyqUnit);
+    updateBookButtons();
+    updateHome();
+  });
+  document.getElementById('btn-unit-4').addEventListener('click', async () => {
+    currentJbyqUnit = '第四单元';
+    await saveSetting('jbyqUnit', currentJbyqUnit);
     updateBookButtons();
     updateHome();
   });
@@ -106,50 +136,63 @@ async function updateHome() {
   document.getElementById('total-progress-fill').style.width = totalWords > 0 ? `${(learnedCount / totalWords * 100).toFixed(1)}%` : '0%';
 }
 
-let currentAudio = null;
+const MS_PER_SYLLABLE = 500;
+const TTS_URL = 'https://dict.youdao.com/dictvoice?audio=';
+let _currentAudio = null;
+let _durationCache = {};
 
-// Speech — 在线音频播放，等待播完再继续
+function ttsUrl(word) {
+  return TTS_URL + encodeURIComponent(word) + '&type=2';
+}
+
 function speakWord(word) {
   return new Promise(resolve => {
-    if (currentAudio) { currentAudio.pause(); currentAudio = null; }
-    const url = `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(word)}&type=1`;
-    const audio = new Audio(url);
-    currentAudio = audio;
+    if (_currentAudio) { _currentAudio.pause(); _currentAudio = null; }
+    const audio = new Audio(ttsUrl(word));
+    _currentAudio = audio;
     let done = false;
     const finish = () => { if (!done) { done = true; resolve(); } };
     audio.onended = finish;
     audio.onerror = finish;
     audio.play().catch(finish);
-    setTimeout(finish, 2000);
+    setTimeout(finish, 3000);
   });
 }
 
-function stopAudio() {
-  if (currentAudio) { currentAudio.pause(); currentAudio.src = ''; currentAudio = null; }
+function stopSpeech() {
+  if (_currentAudio) { _currentAudio.pause(); _currentAudio = null; }
 }
 
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function playWithHighlight(word, syllableSpans, gen, generation) {
-  const url = `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(word.word)}&type=1`;
-  const audio = new Audio(url);
-  const audioReady = new Promise(resolve => {
-    audio.oncanplaythrough = resolve;
-    audio.onerror = resolve;
-    setTimeout(resolve, 3000);
+function preloadAudio(word) {
+  return new Promise(resolve => {
+    const audio = new Audio(ttsUrl(word));
+    const ready = () => {
+      if (audio.duration && isFinite(audio.duration)) {
+        _durationCache[word] = audio.duration * 1000;
+      }
+      resolve(audio);
+    };
+    audio.oncanplaythrough = ready;
+    audio.onerror = ready;
+    setTimeout(() => resolve(audio), 3000);
     audio.load();
   });
-  await audioReady;
-  if (gen !== generation) return;
+}
 
-  const syllCount = word.syllables.length;
-  const durationMs = (audio.duration && isFinite(audio.duration)) ? audio.duration * 1000 : syllCount * 400;
+async function playWithHighlight(word, syllableSpans, gen, generation) {
+  if (_currentAudio) { _currentAudio.pause(); _currentAudio = null; }
+
+  const wordStr = word.word;
+  const syllCount = (word.syllables || [wordStr]).length;
+  const durationMs = _durationCache[wordStr] || (syllCount * MS_PER_SYLLABLE);
   const perSyllable = durationMs / syllCount;
 
-  if (currentAudio) { currentAudio.pause(); currentAudio = null; }
-  currentAudio = audio;
+  const audio = new Audio(ttsUrl(wordStr));
+  _currentAudio = audio;
   audio.play().catch(() => {});
 
   for (let i = 0; i < syllCount; i++) {
@@ -159,12 +202,14 @@ async function playWithHighlight(word, syllableSpans, gen, generation) {
     if (gen !== generation) return;
   }
   syllableSpans.forEach(s => s.classList.remove('active'));
+
+  await new Promise(r => { audio.onended = r; setTimeout(r, 2000); });
 }
 
 // Learn Mode
 function initLearn() {
   document.getElementById('btn-learn-back').addEventListener('click', () => {
-    stopAudio();
+    stopSpeech();
     learnGeneration++;
     showPage('page-home');
   });
@@ -220,45 +265,17 @@ async function showCurrentLearnWord() {
   await delay(200);
   if (gen !== learnGeneration) return;
 
-  // 预加载音频获取时长，实现音节高亮与发音同步
-  const url = `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(word.word)}&type=1`;
-  const audio = new Audio(url);
-  const audioReady = new Promise(resolve => {
-    audio.oncanplaythrough = resolve;
-    audio.onerror = resolve;
-    setTimeout(resolve, 3000);
-    audio.load();
-  });
-  await audioReady;
+  // 预加载音频并缓存时长
+  await preloadAudio(word.word);
   if (gen !== learnGeneration) return;
 
-  const durationMs = (audio.duration && isFinite(audio.duration)) ? audio.duration * 1000 : word.syllables.length * 400;
-  const perSyllable = durationMs / word.syllables.length;
-
-  if (currentAudio) { currentAudio.pause(); currentAudio = null; }
-  currentAudio = audio;
-  audio.play().catch(() => {});
-
-  for (let i = 0; i < word.syllables.length; i++) {
-    syllableSpans.forEach(s => s.classList.remove('active'));
-    syllableSpans[i].classList.add('active');
-    await delay(perSyllable);
+  // 播放3遍，每遍带音节高亮
+  for (let play = 0; play < 3; play++) {
+    await playWithHighlight(word, syllableSpans, gen, learnGeneration);
+    if (gen !== learnGeneration) return;
+    if (play < 2) await delay(300);
     if (gen !== learnGeneration) return;
   }
-  syllableSpans.forEach(s => s.classList.remove('active'));
-
-  // 等音频播完
-  await delay(300);
-  if (gen !== learnGeneration) return;
-
-  // 第二遍：播放 + 高亮
-  await playWithHighlight(word, syllableSpans, gen, learnGeneration);
-  if (gen !== learnGeneration) return;
-  await delay(300);
-  if (gen !== learnGeneration) return;
-
-  // 第三遍：播放 + 高亮
-  await playWithHighlight(word, syllableSpans, gen, learnGeneration);
 
   // 显示 Next 按钮 + 标记按钮 + 点击查看释义提示
   document.getElementById('btn-next-word').style.display = 'block';
@@ -290,7 +307,7 @@ async function showCurrentLearnWord() {
 }
 
 async function nextLearnWord(markHard) {
-  stopAudio();
+  stopSpeech();
   learnGeneration++;
   const word = currentWords[currentIndex];
   const progress = createProgress(word.word, word.unitKey || '');
@@ -426,7 +443,7 @@ function initHardReview() {
     updateHome();
   });
   document.getElementById('btn-hard-learn-back').addEventListener('click', () => {
-    stopAudio();
+    stopSpeech();
     hardLearnGen++;
     showPage('page-hard-words');
     renderHardWordsList();
@@ -500,45 +517,17 @@ async function showCurrentHardLearnWord() {
   await delay(200);
   if (gen !== hardLearnGen) return;
 
-  // Preload audio
-  const url = `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(word.word)}&type=1`;
-  const audio = new Audio(url);
-  const audioReady = new Promise(resolve => {
-    audio.oncanplaythrough = resolve;
-    audio.onerror = resolve;
-    setTimeout(resolve, 3000);
-    audio.load();
-  });
-  await audioReady;
+  // 预加载音频并缓存时长
+  await preloadAudio(word.word);
   if (gen !== hardLearnGen) return;
 
-  const syllableCount = (word.syllables || [word.word]).length;
-  const durationMs = (audio.duration && isFinite(audio.duration)) ? audio.duration * 1000 : syllableCount * 400;
-  const perSyllable = durationMs / syllableCount;
-
-  if (currentAudio) { currentAudio.pause(); currentAudio = null; }
-  currentAudio = audio;
-  audio.play().catch(() => {});
-
-  for (let i = 0; i < syllableCount; i++) {
-    syllableSpans.forEach(s => s.classList.remove('active'));
-    syllableSpans[i].classList.add('active');
-    await delay(perSyllable);
+  // 播放3遍，每遍带音节高亮
+  for (let play = 0; play < 3; play++) {
+    await playWithHighlight(word, syllableSpans, gen, hardLearnGen);
+    if (gen !== hardLearnGen) return;
+    if (play < 2) await delay(300);
     if (gen !== hardLearnGen) return;
   }
-  syllableSpans.forEach(s => s.classList.remove('active'));
-
-  await delay(300);
-  if (gen !== hardLearnGen) return;
-
-  // 第二遍
-  await playWithHighlight(word, syllableSpans, gen, hardLearnGen);
-  if (gen !== hardLearnGen) return;
-  await delay(300);
-  if (gen !== hardLearnGen) return;
-
-  // 第三遍
-  await playWithHighlight(word, syllableSpans, gen, hardLearnGen);
 
   document.getElementById('btn-hard-next').style.display = 'block';
   document.getElementById('btn-hard-got-it').style.display = 'block';
@@ -565,7 +554,7 @@ async function showCurrentHardLearnWord() {
 }
 
 async function nextHardLearnWord(mastered) {
-  stopAudio();
+  stopSpeech();
   hardLearnGen++;
   const word = hardLearnWords[hardLearnIndex];
   if (mastered) {
@@ -595,7 +584,8 @@ function renderWordList() {
   const gradeNames = {
     '7a': '七年级上册', '7b': '七年级下册',
     '8a': '八年级上册', '8b': '八年级下册',
-    '9': '九年级全一册', 'zk': '中考考纲'
+    '9': '九年级全一册', 'zk': '中考考纲',
+    'jbyq': '基本要求'
   };
 
   const allData = getActiveWordData();

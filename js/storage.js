@@ -100,28 +100,22 @@ async function saveWordProgress(progress) {
 
 function getAllWordData() {
   const data = {};
-  if (typeof WORDS_7A !== 'undefined') data['7a'] = WORDS_7A;
-  if (typeof WORDS_7B !== 'undefined') data['7b'] = WORDS_7B;
-  if (typeof WORDS_8A !== 'undefined') data['8a'] = WORDS_8A;
-  if (typeof WORDS_8B !== 'undefined') data['8b'] = WORDS_8B;
-  if (typeof WORDS_9 !== 'undefined') data['9'] = WORDS_9;
   if (typeof WORDS_ZHONGKAO !== 'undefined') data['zk'] = WORDS_ZHONGKAO;
+  if (typeof WORDS_JBYQ !== 'undefined') data['jbyq'] = WORDS_JBYQ;
   return data;
 }
 
 const BOOK_LABELS = {
-  '7a': '七年级上册', '7b': '七年级下册',
-  '8a': '八年级上册', '8b': '八年级下册',
-  '9': '九年级全一册', 'zk': '中考考纲'
+  'zk': '中考考纲', 'jbyq': '基本要求'
 };
 
 const BOOK_GROUPS = {
-  textbook: ['7a', '7b', '8a', '8b', '9'],
-  zhongkao: ['zk']
+  zhongkao: ['zk'],
+  jbyq: ['jbyq']
 };
 
 async function getSelectedBook() {
-  return await getSetting('selectedBook', 'textbook');
+  return await getSetting('selectedBook', 'zhongkao');
 }
 
 async function setSelectedBook(book) {
