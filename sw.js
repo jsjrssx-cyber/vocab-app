@@ -1,13 +1,8 @@
-const CACHE_NAME = 'vocab-app-v4';
+const CACHE_NAME = 'vocab-app-v5';
 const ASSETS = [
   './',
   './index.html',
   './css/style.css',
-  './js/words7a.js',
-  './js/words7b.js',
-  './js/words8a.js',
-  './js/words8b.js',
-  './js/words9.js',
   './js/words-zk-af.js',
   './js/words-zk-go.js',
   './js/words-zk-pz.js',
