@@ -3,3 +3,4 @@ const WORDS_ZHONGKAO = {};
 for (const [k, v] of Object.entries(WORDS_ZK_AF)) WORDS_ZHONGKAO['A-F ' + k] = v;
 for (const [k, v] of Object.entries(WORDS_ZK_GO)) WORDS_ZHONGKAO['G-O ' + k] = v;
 for (const [k, v] of Object.entries(WORDS_ZK_PZ)) WORDS_ZHONGKAO['P-Z ' + k] = v;
+for (const [k, v] of Object.entries(WORDS_ZK_PHRASES)) WORDS_ZHONGKAO['词组 ' + k] = v;
